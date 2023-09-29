@@ -1,0 +1,27 @@
+[package]
+name = "nano_gpt"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+num-traits = { version = "0.2.15", default-features = false }
+rand_distr = { version = "0.4.3", default-features = false }
+cudarc = {version = "0.9.14"}
+indicatif = {version ="*"}
+rand = {version="0.8.5"}
+
+[dependencies.dfdx]
+git = "https://github.com/coreylowman/dfdx"
+version = "0.13.0"
+optional = true
+features = ["numpy"]
+
+[features]
+cpu = ["dfdx"]
+cuda = ["dfdx/cuda"]
+default=["cpu"]
+
+
+
