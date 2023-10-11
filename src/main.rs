@@ -164,7 +164,7 @@ fn topk(probs: Vec<f32>, top_p: f32, top_k: usize, rng: &mut StdRng) -> usize {
 
     let mut choices = top_k;
     let mut total = 0.0;
-    for (i, p) in probs.iter().take(top_k) {
+    for (i, &(_, p)) in probs.iter().enumerate().take(top_k) {
         total += p;
         if total >= top_p {
             choices = i + 1;
@@ -174,10 +174,10 @@ fn topk(probs: Vec<f32>, top_p: f32, top_k: usize, rng: &mut StdRng) -> usize {
 
     let prob: f32 = rng.gen_range(0.0..total);
     let mut accum = 0.0;
-    for (i, p) in probs.iter().take(choices) {
+    for &(i, p) in probs.iter().take(choices) {
         accum += p;
         if accum >= prob {
-            return *i;
+            return i;
         }
     }
 
