@@ -1,5 +1,8 @@
+#![allow(clippy::type_complexity)]
+mod cache;
 mod dataset;
 mod model;
+use crate::cache::Cache;
 use crate::model::GPTConfig;
 
 use indicatif::ProgressIterator;
@@ -19,6 +22,7 @@ const BATCH_SIZE: usize = 8;
 const TEMPERATURE: f32 = 0.8;
 const TOP_P: f32 = 0.95;
 const TOP_K: usize = 40;
+const USE_CACHE: bool = true;
 
 type E = f32;
 
@@ -53,7 +57,7 @@ fn main() {
     let preprocess = |(x, y): (Vec<u8>, Vec<u8>)| {
         let mut targets = Vec::with_capacity(VOCAB * SEQ_LEN);
         for v in y {
-            let mut one_hotted: [E; VOCAB] = [0.0.into(); VOCAB];
+            let mut one_hotted: [E; VOCAB] = [0.0; VOCAB];
             one_hotted[v as usize] = E::ONE;
             targets.extend_from_slice(&one_hotted);
         }
@@ -63,10 +67,13 @@ fn main() {
         )
     };
 
-    println!("{:}", generate(&dev, &m, prompt, SEQ_LEN, &mut rng));
+    let start = std::time::Instant::now();
+    let gen_len = SEQ_LEN;
+    println!("{:}", generate(&dev, &m, prompt, gen_len, &mut rng),);
+    print_metrics(start.elapsed(), gen_len);
 
     for i_epoch in 0..101 {
-        let mut total_epoch_loss: E = 0.0.into();
+        let mut total_epoch_loss: E = 0.0;
         for (x, y) in train_data
             .shuffled(&mut rng)
             .map(preprocess)
@@ -86,13 +93,11 @@ fn main() {
 
         let total_epoch = i_epoch + epoch_base;
 
-        if i_epoch % 1 == 0 {
-            println!(
-                "Epoch {total_epoch}, loss {:.5}, gen: {:}",
-                total_epoch_loss,
-                generate(&dev, &m, prompt, SEQ_LEN, &mut rng),
-            );
-        }
+        println!(
+            "Epoch {total_epoch}, loss {:.5}, gen: {:}",
+            total_epoch_loss,
+            generate(&dev, &m, prompt, SEQ_LEN, &mut rng),
+        );
 
         if i_epoch % 10 == 0 {
             fs::create_dir("save").unwrap();
@@ -111,36 +116,48 @@ fn generate<E, D: Device<E>>(
 ) -> String
 where
     E: Dtype + num_traits::Float + num_traits::AsPrimitive<f32>,
-    Cpu: Device<E>,
 {
     let mut seq: String = prompt.into();
 
+    let mut pos = 0;
+    let seq_len = seq.len();
+    let mut ids: Vec<_> = seq.as_bytes().iter().map(|v| *v as usize).collect();
+    let x = dev.tensor_from_vec(ids.clone(), (seq_len,));
+
+    let cache = if USE_CACHE {
+        Some(Default::default())
+    } else {
+        None
+    };
+
+    let mut x_len = seq_len;
+    let (mut y, mut cache) = m.try_forward(x, pos, cache).unwrap();
+    pos += if cache.is_some() { x_len } else { 0 };
+
     for _ in 0..gen_num {
-        let seq_len = seq.len();
-        if seq_len >= SEQ_LEN {
+        if seq.len() >= SEQ_LEN {
             break;
         }
-
-        let x = dev.tensor_from_vec(
-            seq.as_bytes().iter().map(|v| *v as usize).collect(),
-            (seq_len,),
-        );
-
-        let y = m.forward(x);
-
-        //NOTE: the cuda select kernel will panic on my gpu, so use cpu kernel instead
-        let dev = Cpu::default();
-        let y = y.to_device(&dev);
-        let probs = y.select(dev.tensor(seq_len - 1));
+        //NOTE: select should be use, but the cuda select kernel will panic on my gpu, so use gather as workaround
+        let probs = y.gather(dev.tensor([x_len - 1]));
         let next_idx = if TOP_K == 0 {
             greedy(probs.as_vec())
         } else {
-            let probs = (probs.to_dtype::<f32>() / TEMPERATURE)
-                .softmax::<Axis<0>>()
-                .as_vec();
-            topk(probs, TOP_P, TOP_K, rng)
+            let probs = (probs / TEMPERATURE).softmax::<Axis<1>>().to_dtype();
+            topk(probs.as_vec(), TOP_P, TOP_K, rng)
         };
+        ids.push(next_idx);
         seq.push(next_idx as u8 as char);
+
+        //next round
+        let (x, pos_inc) = if cache.is_some() {
+            (dev.tensor_from_vec(vec![next_idx], (1,)), 1)
+        } else {
+            (dev.tensor_from_vec(ids.clone(), (ids.len(),)), 0)
+        };
+        x_len = x.shape().0;
+        (y, cache) = m.try_forward(x, pos, cache).unwrap();
+        pos += pos_inc;
     }
 
     seq.chars()
@@ -182,4 +199,16 @@ fn topk(probs: Vec<f32>, top_p: f32, top_k: usize, rng: &mut StdRng) -> usize {
     }
 
     unreachable!()
+}
+
+fn print_metrics(elapsed: std::time::Duration, num_tokens_generated: usize) {
+    let elapsed_s = elapsed.as_secs_f64();
+    let tokens_per_s = num_tokens_generated as f64 / elapsed_s;
+    let ms_per_token = 1000.0 * elapsed_s / num_tokens_generated as f64;
+
+    println!();
+    println!(
+        "*Generated {} tokens in {:.3?} ({tokens_per_s:.3} tokens/s, {ms_per_token:.0} ms/token)*",
+        num_tokens_generated, elapsed
+    );
 }
