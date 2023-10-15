@@ -11,6 +11,7 @@ rand_distr = { version = "0.4.3", default-features = false }
 cudarc = {version = "0.9.14"}
 indicatif = {version ="*"}
 rand = {version="0.8.5"}
+clap = {version="*", features=["derive"]}
 
 [dependencies.dfdx]
 git = "https://github.com/coreylowman/dfdx"

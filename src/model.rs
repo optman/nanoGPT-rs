@@ -1,4 +1,4 @@
-use crate::Cache;
+use crate::{param::*, Cache};
 use dfdx::{
     nn::modules::{
         Embedding, FastGeLU, LayerNorm1D, Linear, Module, ModuleVisitor, Repeated, Residual,
@@ -9,14 +9,6 @@ use dfdx::{
     tensor::Tensor,
     tensor_ops::Device,
 };
-
-const LAYERS: usize = 6; /*12 */
-const VOCAB: usize = 256;
-const HIDEN: usize = 384/*768*/;
-const MLP_HIDEN: usize = HIDEN * 4;
-const HEADERS: usize = 12;
-const HEADER_DIM: usize = HIDEN / HEADERS;
-const MAX_SEQ: usize = 1024;
 
 pub struct GPTConfig {}
 
