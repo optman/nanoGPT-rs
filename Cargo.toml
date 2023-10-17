@@ -12,6 +12,8 @@ cudarc = {version = "0.9.14"}
 indicatif = {version ="*"}
 rand = {version="0.8.5"}
 clap = {version="*", features=["derive"]}
+rust_tokenizers = {version="*"}
+itertools = {version="*"}
 
 [dependencies.dfdx]
 git = "https://github.com/coreylowman/dfdx"

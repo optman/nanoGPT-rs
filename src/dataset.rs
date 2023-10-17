@@ -4,45 +4,43 @@ use std::path::Path;
 
 use dfdx::data::ExactSizeDataset;
 
-pub struct DataSet<const SEQ: usize> {
-    data: Vec<u8>,
+pub struct DataSet {
+    ids: Vec<u16>,
+    seq_len: usize,
 }
 
-impl<const SEQ: usize> DataSet<SEQ> {
-    pub fn new(path: &Path) -> Self {
-        let mut data = Vec::<u8>::new();
-        File::open(path).unwrap().read_to_end(&mut data).unwrap();
+impl DataSet {
+    pub fn new(path: &Path, seq_len: usize) -> Self {
+        let mut buf = Vec::<u8>::new();
+        File::open(path).unwrap().read_to_end(&mut buf).unwrap();
 
-        Self { data }
+        let ids = buf
+            .chunks_exact(2)
+            .map(|chunk| u16::from_be_bytes(chunk.try_into().unwrap()))
+            .collect();
+
+        Self { ids, seq_len }
     }
 }
 
-impl<const SEQ: usize> ExactSizeDataset for DataSet<SEQ> {
-    type Item<'a> = (Vec<u8>, Vec<u8>) where Self: 'a;
+impl ExactSizeDataset for DataSet {
+    type Item<'a> = (Vec<u16>, Vec<u16>) where Self: 'a;
 
     fn get(&self, index: usize) -> Self::Item<'_> {
-        let mut x: Vec<u8> = Vec::with_capacity(SEQ);
-        let mut y: Vec<u8> = Vec::with_capacity(SEQ);
+        let seq_len = self.seq_len;
+        let mut x: Vec<u16> = Vec::with_capacity(seq_len);
+        let mut y: Vec<u16> = Vec::with_capacity(seq_len);
 
-        let mut start = (SEQ + 1) * index;
-        x.extend(self.data[start..start + SEQ].iter());
+        let mut start = (seq_len + 1) * index;
+        x.extend(self.ids[start..start + seq_len].iter());
 
         start += 1;
-        y.extend(self.data[start..start + SEQ].iter());
+        y.extend(self.ids[start..start + seq_len].iter());
 
         (x, y)
     }
 
     fn len(&self) -> usize {
-        self.data.len() / (SEQ + 1)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    #[test]
-    fn test_load_data() {
-        DataSet::<5>::new(Path::new("input.txt"));
+        self.ids.len() / (self.seq_len + 1)
     }
 }

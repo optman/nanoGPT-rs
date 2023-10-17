@@ -1,12 +1,8 @@
 use dfdx::tensor::AutoDevice;
 
-//train param
-pub const BATCH_SIZE: usize = 8;
-pub const SEQ_LEN: usize = 256;
-
 //model param
 pub const LAYERS: usize = 6; /*12 */
-pub const VOCAB: usize = 256;
+pub const VOCAB: usize = 32000; //256;
 pub const HIDEN: usize = 384/*768*/;
 pub const MLP_HIDEN: usize = HIDEN * 4;
 pub const HEADERS: usize = 12;

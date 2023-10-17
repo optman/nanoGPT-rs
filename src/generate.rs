@@ -1,6 +1,10 @@
 use crate::model::GPTModel;
 use dfdx::{prelude::*, tensor_ops::Device};
 use rand::{rngs::StdRng, Rng};
+use rust_tokenizers::{
+    tokenizer::{Tokenizer, TruncationStrategy},
+    vocab::Vocab,
+};
 
 pub struct GenerateOption {
     pub greedy: bool,
@@ -11,7 +15,21 @@ pub struct GenerateOption {
     pub max_seq_len: usize,
 }
 
-pub fn generate<E, D: Device<E>>(
+impl Default for GenerateOption {
+    fn default() -> Self {
+        Self {
+            greedy: false,
+            use_cache: true,
+            top_k: 40,
+            top_p: 0.95,
+            temperature: 0.8,
+            max_seq_len: 100,
+        }
+    }
+}
+
+pub fn generate<V: Vocab, T: Tokenizer<V>, E, D: Device<E>>(
+    tokenizer: &T,
     rng: &mut StdRng,
     dev: &D,
     m: &GPTModel<E, D>,
@@ -22,12 +40,20 @@ pub fn generate<E, D: Device<E>>(
 where
     E: Dtype + num_traits::Float + num_traits::AsPrimitive<f32>,
 {
-    let mut seq: String = prompt.into();
+    let prompt = tokenizer
+        .encode(
+            prompt,
+            None,
+            prompt.len(),
+            &TruncationStrategy::DoNotTruncate,
+            0,
+        )
+        .token_ids;
+    let mut seq: Vec<usize> = prompt.into_iter().map(|c| c as usize).collect();
 
     let mut pos = 0;
     let seq_len = seq.len();
-    let mut ids: Vec<_> = seq.as_bytes().iter().map(|v| *v as usize).collect();
-    let x = dev.tensor_from_vec(ids.clone(), (seq_len,));
+    let x = dev.tensor_from_vec(seq.clone(), (seq_len,));
 
     let cache = if opt.use_cache {
         Some(Default::default())
@@ -51,23 +77,24 @@ where
             let probs = (probs / opt.temperature).softmax::<Axis<1>>().to_dtype();
             topk(probs.as_vec(), opt.top_p, opt.top_k, rng)
         };
-        ids.push(next_idx);
-        seq.push(next_idx as u8 as char);
+        seq.push(next_idx);
 
         //next round
         let (x, pos_inc) = if cache.is_some() {
             (dev.tensor_from_vec(vec![next_idx], (1,)), 1)
         } else {
-            (dev.tensor_from_vec(ids.clone(), (ids.len(),)), 0)
+            (dev.tensor_from_vec(seq.clone(), (seq.len(),)), 0)
         };
         x_len = x.shape().0;
         (y, cache) = m.try_forward(x, pos, cache).unwrap();
         pos += pos_inc;
     }
 
-    seq.chars()
-        .map(|c| if c.is_control() { '#' } else { c })
-        .collect()
+    tokenizer.decode(
+        &seq.into_iter().map(|c| c as i64).collect::<Vec<_>>(),
+        true,
+        false,
+    )
 }
 
 fn greedy<E: PartialOrd>(probs: Vec<E>) -> usize {

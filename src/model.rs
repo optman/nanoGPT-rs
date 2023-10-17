@@ -107,41 +107,40 @@ where
     }
 }
 
-impl<Batch: Dim, const SEQ: usize, E: Dtype, D: Device<E>>
-    ModuleMut<Tensor<(Batch, Const<SEQ>, Const<HIDEN>), E, D, OwnedTape<E, D>>>
+impl<Batch: Dim, Seq: Dim, E: Dtype, D: Device<E>>
+    ModuleMut<Tensor<(Batch, Seq, Const<HIDEN>), E, D, OwnedTape<E, D>>>
     for CausalSelfAttension<E, D>
 where
     E: Dtype + num_traits::Float,
 {
-    type Output = Tensor<(Batch, Const<SEQ>, Const<HIDEN>), E, D, OwnedTape<E, D>>;
+    type Output = Tensor<(Batch, Seq, Const<HIDEN>), E, D, OwnedTape<E, D>>;
     type Error = D::Err;
 
     fn try_forward_mut(
         &mut self,
-        x: Tensor<(Batch, Const<SEQ>, Const<HIDEN>), E, D, OwnedTape<E, D>>,
+        x: Tensor<(Batch, Seq, Const<HIDEN>), E, D, OwnedTape<E, D>>,
     ) -> Result<Self::Output, Self::Error> {
         let dev = x.dev().clone();
         let (q, k, v) = self.attn.try_forward_mut(x)?;
 
-        let (batch, _seq, _hidden) = q.shape().concrete().into();
-        let s = (batch, Const::<SEQ>, Const::<HEADERS>, Const::<HEADER_DIM>);
+        let (batch, seq, _hidden) = q.shape().concrete().into();
+        let s = (batch, seq, Const::<HEADERS>, Const::<HEADER_DIM>);
         let q = q.try_reshape_like(&s)?.permute::<_, Axes4<0, 2, 1, 3>>();
         let k = k.try_reshape_like(&s)?.permute::<_, Axes4<0, 2, 1, 3>>();
         let v = v.try_reshape_like(&s)?.permute::<_, Axes4<0, 2, 1, 3>>();
 
         let scale = (HEADER_DIM as f64).sqrt().recip();
-        let att: Tensor<(usize, Const<HEADERS>, Const<SEQ>, Const<SEQ>), _, _, _> =
+        let att: Tensor<(usize, Const<HEADERS>, usize, usize), _, _, _> =
             q.matmul(k.permute::<_, Axes4<0, 1, 3, 2>>()) * scale;
 
-        let mask = dev.upper_tri_like(&(Const::<SEQ>, Const::<SEQ>), E::min_value(), 1);
-        let att = mask.broadcast_like(&att).leaky_traced() + att;
-
+        let mask = dev.upper_tri_like(&(seq, seq), E::min_value(), 1);
+        let att = mask.broadcast_like::<_, Axes2<0, 1>>(&att).leaky_traced() + att;
         let att = att.softmax::<Axis<3>>();
-        let att: Tensor<(Batch, Const<SEQ>, Const<HIDEN>), _, _, _> = att
+        let att: Tensor<(Batch, Seq, Const<HIDEN>), _, _, _> = att
             .matmul(v)
             .permute::<_, Axes4<0, 2, 1, 3>>()
             //.contiguous()
-            .try_reshape_like(&(batch, Const::<SEQ>, Const::<HIDEN>))?
+            .try_reshape_like(&(batch, seq, Const::<HIDEN>))?
             .realize();
 
         self.proj.try_forward_mut(att)
@@ -203,17 +202,17 @@ where
     }
 }
 
-impl<Batch: Dim, const SEQ: usize, E: Dtype, D: Device<E>>
-    ModuleMut<Tensor<(Batch, Const<SEQ>, Const<HIDEN>), E, D, OwnedTape<E, D>>> for Block<E, D>
+impl<Batch: Dim, Seq: Dim, E: Dtype, D: Device<E>>
+    ModuleMut<Tensor<(Batch, Seq, Const<HIDEN>), E, D, OwnedTape<E, D>>> for Block<E, D>
 where
     E: Dtype + num_traits::Float,
 {
-    type Output = Tensor<(Batch, Const<SEQ>, Const<HIDEN>), E, D, OwnedTape<E, D>>;
+    type Output = Tensor<(Batch, Seq, Const<HIDEN>), E, D, OwnedTape<E, D>>;
     type Error = D::Err;
 
     fn try_forward_mut(
         &mut self,
-        x: Tensor<(Batch, Const<SEQ>, Const<HIDEN>), E, D, OwnedTape<E, D>>,
+        x: Tensor<(Batch, Seq, Const<HIDEN>), E, D, OwnedTape<E, D>>,
     ) -> Result<Self::Output, Self::Error> {
         let x = self.attn.try_forward_mut(x)?;
         self.mlp.try_forward_mut(x)
@@ -290,19 +289,20 @@ where
     }
 }
 
-impl<Batch: Dim, const SEQ: usize, E: Dtype, D: Device<E>>
-    ModuleMut<Tensor<(Batch, Const<SEQ>), usize, D, OwnedTape<E, D>>> for GPTModel<E, D>
+impl<Batch: Dim, Seq: Dim, E: Dtype, D: Device<E>>
+    ModuleMut<Tensor<(Batch, Seq), usize, D, OwnedTape<E, D>>> for GPTModel<E, D>
 where
     E: Dtype + num_traits::Float,
 {
-    type Output = Tensor<(Batch, Const<SEQ>, Const<VOCAB>), E, D, OwnedTape<E, D>>;
+    type Output = Tensor<(Batch, Seq, Const<VOCAB>), E, D, OwnedTape<E, D>>;
     type Error = D::Err;
 
     fn try_forward_mut(
         &mut self,
-        x: Tensor<(Batch, Const<SEQ>), usize, D, OwnedTape<E, D>>,
+        x: Tensor<(Batch, Seq), usize, D, OwnedTape<E, D>>,
     ) -> Result<Self::Output, D::Err> {
-        let pos = x.dev().tensor_from_vec((0..SEQ).collect(), (Const::<SEQ>,));
+        let seq = x.shape().1;
+        let pos = x.dev().tensor_from_vec((0..seq.size()).collect(), (seq,));
         let pos = self.pos_enc.try_forward_mut(pos)?;
 
         let x = self.embedding_layer.try_forward_mut(x)?;

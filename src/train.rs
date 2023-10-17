@@ -4,27 +4,31 @@ use indicatif::ProgressIterator;
 use rand::prelude::StdRng;
 use std::{fs, path::Path};
 
+#[allow(clippy::too_many_arguments)]
 pub fn train(
     rng: &mut StdRng,
     dev: &D,
     m: &mut GPTModel<E, D>,
     epoch_base: usize,
     batch_size: usize,
+    seq_len: usize,
+    input: &str,
+    gen: impl Fn(&GPTModel<E, D>) -> String,
 ) {
     let mut grads = m.alloc_grads();
     let mut opt = Adam::new(m, Default::default());
-    let train_data = dataset::DataSet::<SEQ_LEN>::new(Path::new("input.txt"));
+    let train_data = dataset::DataSet::new(Path::new(input), seq_len);
 
-    let preprocess = |(x, y): (Vec<u8>, Vec<u8>)| {
-        let mut targets = Vec::with_capacity(VOCAB * SEQ_LEN);
+    let preprocess = |(x, y): (Vec<u16>, Vec<u16>)| {
+        let mut targets = Vec::with_capacity(VOCAB * seq_len);
         for v in y {
             let mut one_hotted: [E; VOCAB] = [0.0; VOCAB];
             one_hotted[v as usize] = 1.0;
             targets.extend_from_slice(&one_hotted);
         }
         (
-            dev.tensor_from_vec(x.iter().map(|v| *v as usize).collect(), (Const::<SEQ_LEN>,)),
-            dev.tensor_from_vec(targets, (Const::<SEQ_LEN>, Const::<VOCAB>)),
+            dev.tensor_from_vec(x.iter().map(|v| *v as usize).collect(), (seq_len,)),
+            dev.tensor_from_vec(targets, (seq_len, Const::<VOCAB>)),
         )
     };
 
@@ -49,7 +53,11 @@ pub fn train(
 
         let total_epoch = epoch_i + epoch_base;
 
-        println!("Epoch {total_epoch}, loss {:.5}", total_epoch_loss);
+        println!(
+            "Epoch {total_epoch}, loss {:.5} => {:}",
+            total_epoch_loss,
+            gen(m)
+        );
 
         if epoch_i % 10 == 0 {
             fs::create_dir_all("save").unwrap();
