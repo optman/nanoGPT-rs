@@ -1,10 +1,14 @@
-use crate::model::GPTModel;
-use dfdx::{prelude::*, tensor_ops::Device};
+use crate::{
+    cache::Cache,
+    model::{GPTModel, Params},
+};
+use dfdx::prelude::*;
 use rand::{rngs::StdRng, Rng};
 use rust_tokenizers::{
     tokenizer::{Tokenizer, TruncationStrategy},
     vocab::Vocab,
 };
+use std::io::Write;
 
 pub struct GenerateOption {
     pub greedy: bool,
@@ -13,6 +17,9 @@ pub struct GenerateOption {
     pub top_p: f32,
     pub temperature: f32,
     pub max_seq_len: usize,
+    pub pos_scale: usize,
+    pub verbose: bool,
+    pub cache_size: usize,
 }
 
 impl Default for GenerateOption {
@@ -24,22 +31,32 @@ impl Default for GenerateOption {
             top_p: 0.95,
             temperature: 0.8,
             max_seq_len: 100,
+            pos_scale: 1,
+            verbose: false,
+            cache_size: 256,
         }
     }
 }
 
-pub fn generate<V: Vocab, T: Tokenizer<V>, E, D: Device<E>>(
+pub fn generate<P: Params, V: Vocab, T: Tokenizer<V>, E, D: Device<E>>(
     tokenizer: &T,
     rng: &mut StdRng,
     dev: &D,
-    m: &GPTModel<E, D>,
+    m: &GPTModel<P, E, D>,
     prompt: &str,
     gen_num: usize,
     opt: &GenerateOption,
 ) -> String
 where
     E: Dtype + num_traits::Float + num_traits::AsPrimitive<f32>,
+    f64: From<E>,
+    D: Device<f64>,
 {
+    if opt.verbose {
+        print!("{:}", prompt);
+        std::io::stdout().flush().unwrap();
+    }
+
     let prompt = tokenizer
         .encode(
             prompt,
@@ -56,13 +73,13 @@ where
     let x = dev.tensor_from_vec(seq.clone(), (seq_len,));
 
     let cache = if opt.use_cache {
-        Some(Default::default())
+        Some(Cache::new(m.params().layers(), opt.cache_size))
     } else {
         None
     };
 
     let mut x_len = seq_len;
-    let (mut y, mut cache) = m.try_forward(x, pos, cache).unwrap();
+    let (mut y, mut cache) = m.try_forward(x, pos, opt.pos_scale, cache).unwrap();
     pos += if cache.is_some() { x_len } else { 0 };
 
     for _ in 0..gen_num {
@@ -79,6 +96,11 @@ where
         };
         seq.push(next_idx);
 
+        if opt.verbose {
+            print!("{:}", tokenizer.decode(&[next_idx as i64], true, false));
+            std::io::stdout().flush().unwrap();
+        }
+
         //next round
         let (x, pos_inc) = if cache.is_some() {
             (dev.tensor_from_vec(vec![next_idx], (1,)), 1)
@@ -86,7 +108,7 @@ where
             (dev.tensor_from_vec(seq.clone(), (seq.len(),)), 0)
         };
         x_len = x.shape().0;
-        (y, cache) = m.try_forward(x, pos, cache).unwrap();
+        (y, cache) = m.try_forward(x, pos, opt.pos_scale, cache).unwrap();
         pos += pos_inc;
     }
 

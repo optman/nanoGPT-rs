@@ -1,29 +1,28 @@
 #![allow(clippy::type_complexity)]
 mod cache;
 mod cli;
+mod config;
 mod dataset;
 mod generate;
 mod model;
-mod param;
-mod tokenize;
+mod pretokenize;
+mod rotary;
 mod train;
-use crate::{
-    cache::Cache,
-    generate::GenerateOption,
-    model::GPTConfig,
-    param::{D, E},
-    tokenize::tokenize,
-};
+use crate::{cache::Cache, generate::GenerateOption, pretokenize::pretokenize};
 use cli::{Cli, Commands};
+use config::Config;
 use generate::{generate, print_metrics};
-use model::GPTModel;
+use model::{GPTModel, Params};
 use rust_tokenizers::tokenizer::SentencePieceBpeTokenizer;
 use train::train;
 
 use clap::Parser;
-use dfdx::{prelude::*, tensor::AutoDevice};
+use dfdx::{nn::LoadSafeTensors, tensor::AutoDevice};
 use rand::prelude::{SeedableRng, StdRng};
 use std::path::Path;
+
+type E = f32;
+type D = AutoDevice;
 
 fn main() {
     let args = Cli::parse();
@@ -31,6 +30,8 @@ fn main() {
     let dev = AutoDevice::default();
     let mut rng = StdRng::seed_from_u64(args.seed);
     let tokenizer = load_tokenizer(&args.tokenizer);
+
+    let conf = Config::load("model.json");
 
     match args.command {
         Commands::Generate {
@@ -43,8 +44,11 @@ fn main() {
             greedy,
             bench,
             model,
+            pos_scale,
+            cache_size,
         } => {
-            let (m, _) = load_model(&dev, model);
+            let mut m = conf.build(&dev);
+            load_model(&mut m, model);
 
             let gen_opt = GenerateOption {
                 use_cache: !disable_cache,
@@ -53,12 +57,14 @@ fn main() {
                 top_p,
                 temperature,
                 max_seq_len: num_tokens,
+                pos_scale,
+                verbose: true,
+                cache_size,
             };
 
             let start = std::time::Instant::now();
-            println!(
-                "{:}",
-                generate(&tokenizer, &mut rng, &dev, &m, &prompt, num_tokens, &gen_opt)
+            let _ = generate(
+                &tokenizer, &mut rng, &dev, &m, &prompt, num_tokens, &gen_opt,
             );
             if bench {
                 print_metrics(start.elapsed(), num_tokens);
@@ -70,10 +76,15 @@ fn main() {
             prompt,
             batch_size,
             seq_len,
+            save_dir,
+            epoch_save,
+            epoch_max,
+            lr,
         } => {
-            let (mut m, epoch_base) = load_model(&dev, model);
+            let mut m = conf.build(&dev);
+            let epoch_base = load_model(&mut m, model);
 
-            let gen = |m: &GPTModel<E, D>| -> String {
+            let gen = |m: &GPTModel<_, _, _>| -> String {
                 let mut rng = StdRng::seed_from_u64(0);
                 generate(
                     &tokenizer,
@@ -87,24 +98,21 @@ fn main() {
             };
 
             train(
-                &mut rng, &dev, &mut m, epoch_base, batch_size, seq_len, &input, gen,
+                &mut rng, &dev, &mut m, epoch_base, batch_size, seq_len, &input, &save_dir,
+                epoch_save, epoch_max, lr, gen,
             );
         }
-        Commands::Tokenize {
+        Commands::PreTokenize {
             input,
             output,
             chunk_size,
         } => {
-            tokenize(&tokenizer, &input, &output, chunk_size);
+            pretokenize(&tokenizer, &input, &output, chunk_size);
         }
     }
 }
 
-fn load_model(dev: &D, path: Option<String>) -> (GPTModel<E, D>, usize) {
-    let conf = GPTConfig {};
-
-    let mut m = conf.init::<E, _>(dev);
-
+fn load_model<P: Params>(m: &mut GPTModel<P, E, D>, path: Option<String>) -> usize {
     let mut epoch_base = 0;
     if let Some(path) = path {
         println!("load from {path}");
@@ -117,10 +125,10 @@ fn load_model(dev: &D, path: Option<String>) -> (GPTModel<E, D>, usize) {
             .parse::<usize>()
             .unwrap()
             + 1;
-        m.load(path).unwrap();
+        m.load_safetensors(path).unwrap();
     };
 
-    (m, epoch_base)
+    epoch_base
 }
 
 fn load_tokenizer(path: &str) -> SentencePieceBpeTokenizer {

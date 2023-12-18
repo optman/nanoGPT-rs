@@ -5,7 +5,7 @@ use rust_tokenizers::{
 };
 use std::io::{Read, Write};
 
-pub fn tokenize<V: Vocab, T: Tokenizer<V>>(
+pub fn pretokenize<V: Vocab, T: Tokenizer<V>>(
     tokenizer: &T,
     input: &str,
     output: &str,

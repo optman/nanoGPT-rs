@@ -5,7 +5,7 @@ use std::path::Path;
 use dfdx::data::ExactSizeDataset;
 
 pub struct DataSet {
-    ids: Vec<u16>,
+    ids: Vec<usize>,
     seq_len: usize,
 }
 
@@ -16,7 +16,7 @@ impl DataSet {
 
         let ids = buf
             .chunks_exact(2)
-            .map(|chunk| u16::from_be_bytes(chunk.try_into().unwrap()))
+            .map(|chunk| u16::from_be_bytes(chunk.try_into().unwrap()) as usize)
             .collect();
 
         Self { ids, seq_len }
@@ -24,18 +24,16 @@ impl DataSet {
 }
 
 impl ExactSizeDataset for DataSet {
-    type Item<'a> = (Vec<u16>, Vec<u16>) where Self: 'a;
+    type Item<'a> = (&'a[usize], &'a[usize]) where Self: 'a;
 
     fn get(&self, index: usize) -> Self::Item<'_> {
         let seq_len = self.seq_len;
-        let mut x: Vec<u16> = Vec::with_capacity(seq_len);
-        let mut y: Vec<u16> = Vec::with_capacity(seq_len);
 
         let mut start = (seq_len + 1) * index;
-        x.extend(self.ids[start..start + seq_len].iter());
+        let x = &self.ids[start..start + seq_len];
 
         start += 1;
-        y.extend(self.ids[start..start + seq_len].iter());
+        let y = &self.ids[start..start + seq_len];
 
         (x, y)
     }

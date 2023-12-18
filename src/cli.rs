@@ -41,6 +41,12 @@ pub(crate) enum Commands {
 
         #[arg(short, long, default_value=None)]
         model: Option<String>,
+
+        #[arg(long, default_value_t = 4)] //cache_size / seq_len(training)
+        pos_scale: usize,
+
+        #[arg(long, default_value_t = 256)]
+        cache_size: usize,
     },
 
     Train {
@@ -58,8 +64,20 @@ pub(crate) enum Commands {
 
         #[arg(short, long, default_value_t = 64)]
         seq_len: usize,
+
+        #[arg(long, default_value = "save")]
+        save_dir: String,
+
+        #[arg(long, default_value_t = 10)]
+        epoch_save: usize,
+
+        #[arg(long, default_value_t = 100)]
+        epoch_max: usize,
+
+        #[arg(long, default_value_t = 1e-4)]
+        lr: f64,
     },
-    Tokenize {
+    PreTokenize {
         #[arg(short, long, default_value = "")]
         input: String,
 
