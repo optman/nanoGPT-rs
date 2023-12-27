@@ -90,10 +90,13 @@ pub fn new<HeadDim: Dim, E: Dtype, D: Device<E>>(
 ) -> RotaryEmbedding<HeadDim, E, D> {
     let half_hiden = head_dim.size() / 2;
     let theda = dev.tensor_from_vec(
-        (0..half_hiden).map(|c| E::from_usize(c).unwrap()).collect(),
+        (0..head_dim.size())
+            .step_by(2)
+            .map(|c| E::from_usize(c).unwrap())
+            .collect(),
         (half_hiden,),
     );
-    let theda = ((theda / half_hiden as f32) * (base as f32).ln())
+    let theda = ((theda / head_dim.size() as f32) * (base as f32).ln())
         .exp()
         .recip();
 
