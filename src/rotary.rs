@@ -21,10 +21,7 @@ pub struct RotaryEmbedding<HeadDim: Dim, E: Dtype, D: Device<E>> {
     cos: Tensor<(usize, HeadDim), E, D>,
     sin: Tensor<(usize, HeadDim), E, D>,
 }
-impl<HeadDim: Dim, E: Dtype, D: Device<E>> RotaryEmbedding<HeadDim, E, D>
-where
-    f64: From<E>,
-{
+impl<HeadDim: Dim, E: Dtype, D: Device<E>> RotaryEmbedding<HeadDim, E, D> {
     //none tape
     pub fn try_forward<Seq: Dim, Headers: Dim>(
         &self,
@@ -45,10 +42,9 @@ where
         let sub_cos: Tensor<(Seq, HeadDim), _, _> = self.cos.clone().gather(idx.clone()).realize();
         let sub_sin: Tensor<(Seq, HeadDim), _, _> = self.sin.clone().gather(idx).realize();
 
-        let neg_half_x: Tensor<(Seq, Headers, HeadDim), _, _> =
-            (first_half * E::from_f32(-1.0).unwrap(), second_half)
-                .concat_tensor_along(Axis::<2>)
-                .realize();
+        let neg_half_x: Tensor<(Seq, Headers, HeadDim), _, _> = (first_half.negate(), second_half)
+            .concat_tensor_along(Axis::<2>)
+            .realize();
 
         let y = sub_sin.broadcast_like(&x) * neg_half_x + sub_cos.broadcast_like(&x) * x;
 
@@ -72,7 +68,7 @@ where
             self.sin.leaky_trace().slice((..seq.size(), ..)).realize();
 
         let neg_half_x: Tensor<(Batch, Seq, Headers, HeadDim), _, _, _> =
-            (first_half * E::from_f32(-1.0).unwrap(), second_half)
+            (first_half.negate(), second_half)
                 .concat_tensor_along(Axis::<3>)
                 .realize();
 

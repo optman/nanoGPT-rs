@@ -58,7 +58,6 @@ impl<P: Params> CausalSelfAttensionConfig<P> {
 impl<P: Params, E, D: Device<E>> CausalSelfAttension<P, E, D>
 where
     E: Dtype + num_traits::Float,
-    f64: From<E>,
 {
     fn try_forward<Seq: Dim>(
         &self,
@@ -139,7 +138,6 @@ where
 impl<P: Params, E: Dtype, D: Device<E>> CausalSelfAttension<P, E, D>
 where
     E: Dtype + num_traits::Float,
-    f64: From<E>,
 {
     fn try_forward_mut<Batch: Dim, Seq: Dim>(
         &mut self,
@@ -180,7 +178,7 @@ where
         let att: Tensor<(usize, P::Heads, usize, usize), _, _, _> =
             q.matmul(k.permute::<_, Axes4<0, 1, 3, 2>>()) * scale;
 
-        let mask = dev.upper_tri_like(&(seq, seq), E::min_value(), 1);
+        let mask = dev.upper_tri_like(&(seq, seq), E::neg_infinity(), 1);
         let att = mask.broadcast_like::<_, Axes2<0, 1>>(&att).leaky_traced() + att;
         let att = att.softmax::<Axis<3>>();
         let att = self.attn_dropout.try_forward_mut(att)?;
@@ -242,7 +240,6 @@ impl<P: Params> BlockConfig<P> {
 impl<P: Params, E, D: Device<E>> Block<P, E, D>
 where
     E: Dtype + num_traits::Float,
-    f64: From<E>,
 {
     pub fn try_forward<Seq: Dim>(
         &self,
@@ -298,7 +295,6 @@ pub struct GPTModelConfig<P: Params> {
 impl<P: Params, E: Dtype, D: Device<E>> GPTModel<P, E, D>
 where
     E: Dtype + num_traits::Float,
-    f64: From<E>,
     D: Device<f64>,
 {
     pub fn params(&self) -> &P {
