@@ -116,7 +116,7 @@ where
             q.matmul(k.permute::<_, Axes3<0, 2, 1>>()) * scale;
 
         let attn_seq = kv_seq;
-        let mask = dev.upper_tri_like(&(attn_seq, attn_seq), E::min_value(), 1);
+        let mask = dev.upper_tri_like(&(attn_seq, attn_seq), E::neg_infinity(), 1);
         let sub_mask_sel = ((attn_seq - seq)..attn_seq).collect();
         let sub_mask_sel = dev.tensor_from_vec(sub_mask_sel, (seq,));
         let mask = mask.gather(sub_mask_sel);
