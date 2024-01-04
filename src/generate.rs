@@ -87,11 +87,11 @@ where
             break;
         }
         //NOTE: select should be use, but the cuda select kernel will panic on my gpu, so use gather as workaround
-        let probs = y.gather(dev.tensor([x_len - 1]));
+        let logits = y.gather(dev.tensor([x_len - 1]));
         let next_idx = if opt.greedy {
-            greedy(probs.as_vec())
+            greedy(logits.as_vec())
         } else {
-            let probs = (probs / opt.temperature).softmax::<Axis<1>>().to_dtype();
+            let probs = (logits / opt.temperature).softmax::<Axis<1>>().to_dtype();
             topk(probs.as_vec(), opt.top_p, opt.top_k, rng)
         };
         seq.push(next_idx);
@@ -119,8 +119,8 @@ where
     )
 }
 
-fn greedy<E: PartialOrd>(probs: Vec<E>) -> usize {
-    probs
+fn greedy<E: PartialOrd>(logits: Vec<E>) -> usize {
+    logits
         .iter()
         .enumerate()
         .max_by(|x, y| x.1.partial_cmp(y.1).unwrap())
