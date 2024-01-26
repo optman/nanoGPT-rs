@@ -66,14 +66,8 @@ where
         pos: usize,
         pos_scale: usize,
         pos_enc: &RotaryEmbedding<P::HeadDim, E, D>,
-        mut cache: Option<Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
-    ) -> Result<
-        (
-            Tensor<(Seq, P::Hidden), E, D>,
-            Option<Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
-        ),
-        Error,
-    > {
+        cache: &mut Option<&mut Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
+    ) -> Result<Tensor<(Seq, P::Hidden), E, D>, Error> {
         let dev = x.dev().clone();
         let hidden = x.shape().1;
         let (q, k, v) = self.attn.try_forward(x)?;
@@ -131,7 +125,7 @@ where
             .try_reshape_like(&(seq, hidden))?
             .realize();
 
-        Ok((self.proj.try_forward(att)?, cache))
+        Ok(self.proj.try_forward(att)?)
     }
 }
 
@@ -248,20 +242,14 @@ where
         pos: usize,
         pos_scale: usize,
         pos_enc: &RotaryEmbedding<P::HeadDim, E, D>,
-        cache: Option<Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
-    ) -> Result<
-        (
-            Tensor<(Seq, P::Hidden), E, D>,
-            Option<Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
-        ),
-        Error,
-    > {
+        cache: &mut Option<&mut Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
+    ) -> Result<Tensor<(Seq, P::Hidden), E, D>, Error> {
         let x2 = self.norm.try_forward(x.clone())?;
-        let (x2, cache) = self
+        let x2 = self
             .attn
             .try_forward(x2, layer, pos, pos_scale, pos_enc, cache)?;
         let x = x2.try_add(x)?;
-        Ok((self.mlp.try_forward(x)?, cache))
+        Ok(self.mlp.try_forward(x)?)
     }
 
     fn try_forward_mut<Batch: Dim, Seq: Dim>(
@@ -310,21 +298,13 @@ where
         x: Tensor<(Seq,), usize, D>,
         pos: usize,
         pos_scale: usize,
-        cache: Option<Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
-    ) -> Result<
-        (
-            Tensor<(Seq, P::Vocab), E, D>,
-            Option<Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
-        ),
-        Error,
-    > {
+        cache: &mut Option<&mut Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
+    ) -> Result<Tensor<(Seq, P::Vocab), E, D>, Error> {
         let mut x = self.embedding_layer.try_forward(x)?;
-        let mut cache = cache;
         for i in 0..self.layers() {
-            (x, cache) =
-                self.atten_layers[i].try_forward(x, i, pos, pos_scale, &self.pos_enc, cache)?;
+            x = self.atten_layers[i].try_forward(x, i, pos, pos_scale, &self.pos_enc, cache)?;
         }
-        Ok((self.lm_header.try_forward(x)?, cache))
+        Ok(self.lm_header.try_forward(x)?)
     }
 
     pub fn try_forward_mut<Batch: Dim, Seq: Dim>(
