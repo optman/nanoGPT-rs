@@ -59,27 +59,26 @@ impl<P: Params, E, D: Device<E>> CausalSelfAttension<P, E, D>
 where
     E: Dtype + num_traits::Float,
 {
-    fn try_forward<Seq: Dim>(
+    fn try_forward<Batch: Dim, Seq: Dim>(
         &self,
-        x: Tensor<(Seq, P::Hidden), E, D>,
+        x: Tensor<(Batch, Seq, P::Hidden), E, D>,
         layer: usize,
-        pos: usize,
-        pos_scale: usize,
+        pos: Tensor<(Batch, Seq), usize, D>,
         pos_enc: &RotaryEmbedding<P::HeadDim, E, D>,
         cache: &mut Option<&mut Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
-    ) -> Result<Tensor<(Seq, P::Hidden), E, D>, Error> {
+    ) -> Result<Tensor<(Batch, Seq, P::Hidden), E, D>, Error> {
         let dev = x.dev().clone();
-        let hidden = x.shape().1;
+        let hidden = x.shape().2;
         let (q, k, v) = self.attn.try_forward(x)?;
-        let (seq, _hidden) = q.shape().concrete().into();
+        let (batch, seq, _hidden) = q.shape().concrete().into();
 
-        let qs = (seq, self.p.heads(), self.p.head_dim());
+        let qs = (batch, seq, self.p.heads(), self.p.head_dim());
         let q = q.try_reshape_like(&qs)?;
-        let q = pos_enc.try_forward(q, pos, pos_scale)?;
+        let q = pos_enc.try_forward(q, pos.clone().realize())?;
 
-        let kvs = (seq, self.p.kv_heads(), self.p.head_dim());
+        let kvs = (batch, seq, self.p.kv_heads(), self.p.head_dim());
         let k = k.reshape_like(&kvs);
-        let mut k = pos_enc.try_forward(k, pos, pos_scale)?;
+        let mut k = pos_enc.try_forward(k, pos.realize())?;
 
         let mut v = v.reshape_like(&kvs);
 
@@ -87,42 +86,44 @@ where
             (k, v) = cache.append(layer, k, v);
         }
 
-        //(seq, header, header_dim) -> (headers, seq, header_dim)
-        let q = q.permute::<_, Axes3<1, 0, 2>>();
+        //(batch, seq, header, header_dim) -> (batch, headers, seq, header_dim)
+        let q = q.permute::<_, Axes4<0, 2, 1, 3>>();
 
         let repeate = self.p.heads().size() / self.p.kv_heads().size();
-        let (kv_seq, _kv_headers, _hidden) = k.shape().concrete().into();
-        let kvs2 = (kv_seq, self.p.kv_heads(), repeate, self.p.head_dim());
-        let kvs3 = (kv_seq, self.p.heads(), self.p.head_dim());
+        let (batch, kv_seq, _kv_headers, _hidden) = k.shape().concrete().into();
+        let kvs2 = (batch, kv_seq, self.p.kv_heads(), repeate, self.p.head_dim());
+        let kvs3 = (batch, kv_seq, self.p.heads(), self.p.head_dim());
 
         let k = k
             .broadcast_like(&kvs2)
             .try_reshape_like(&kvs3)?
-            .permute::<_, Axes3<1, 0, 2>>();
+            .permute::<_, Axes4<0, 2, 1, 3>>();
 
         let v = v
             .broadcast_like(&kvs2)
             .try_reshape_like(&kvs3)?
-            .permute::<_, Axes3<1, 0, 2>>();
+            .permute::<_, Axes4<0, 2, 1, 3>>();
 
-        let scale = (self.p.head_dim().size() as f32).sqrt().recip();
-        let att: Tensor<(P::Heads, usize, usize), _, _, _> =
-            q.matmul(k.permute::<_, Axes3<0, 2, 1>>()) * scale;
+        let scale = (self.p.head_dim().size() as f64).sqrt().recip();
+        //att = (batch, headers, kv_seq, kv_seq)
+        let att: Tensor<(usize, P::Heads, usize, usize), _, _, _> =
+            q.matmul(k.permute::<_, Axes4<0, 1, 3, 2>>()) * scale;
 
         let attn_seq = kv_seq;
         let mask = dev.upper_tri_like(&(attn_seq, attn_seq), E::neg_infinity(), 1);
         let sub_mask_sel = ((attn_seq - seq)..attn_seq).collect();
         let sub_mask_sel = dev.tensor_from_vec(sub_mask_sel, (seq,));
-        let mask = mask.gather(sub_mask_sel);
-        let att = mask.broadcast_like(&att) + att;
+        let mask = mask.gather(sub_mask_sel.clone());
+        let mask = mask.broadcast_like::<_, Axes2<0, 1>>(&att);
 
-        let att = att.softmax::<Axis<2>>();
+        let att = mask + att;
+        let att = att.softmax::<Axis<3>>();
 
-        let att: Tensor<(Seq, P::Hidden), E, D> = att
+        let att: Tensor<(Batch, Seq, P::Hidden), E, D> = att
             .matmul(v)
-            .permute::<_, Axes3<1, 0, 2>>()
+            .permute::<_, Axes4<0, 2, 1, 3>>()
             //.contiguous()
-            .try_reshape_like(&(seq, hidden))?
+            .try_reshape_like(&(batch, seq, hidden))?
             .realize();
 
         Ok(self.proj.try_forward(att)?)
@@ -145,12 +146,12 @@ where
         let (batch, seq, _hidden) = q.shape().concrete().into();
         let qs = (batch, seq, self.p.heads(), self.p.head_dim());
         let q = q.try_reshape_like(&qs)?;
-        let q = pos_enc.try_forward_batch(q)?;
+        let q = pos_enc.try_forward_mut(q)?;
 
         let kvs = (batch, seq, self.p.kv_heads(), self.p.head_dim());
         let k = k.try_reshape_like(&kvs)?;
         let v = v.try_reshape_like(&kvs)?;
-        let k = pos_enc.try_forward_batch(k)?;
+        let k = pos_enc.try_forward_mut(k)?;
 
         //(batch,seq, headers, header_dim) -> (batch, header, seq, header_dim)
         let q = q.permute::<_, Axes4<0, 2, 1, 3>>();
@@ -235,19 +236,16 @@ impl<P: Params, E, D: Device<E>> Block<P, E, D>
 where
     E: Dtype + num_traits::Float,
 {
-    pub fn try_forward<Seq: Dim>(
+    pub fn try_forward<Batch: Dim, Seq: Dim>(
         &self,
-        x: Tensor<(Seq, P::Hidden), E, D>,
+        x: Tensor<(Batch, Seq, P::Hidden), E, D>,
         layer: usize,
-        pos: usize,
-        pos_scale: usize,
+        pos: Tensor<(Batch, Seq), usize, D>,
         pos_enc: &RotaryEmbedding<P::HeadDim, E, D>,
         cache: &mut Option<&mut Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
-    ) -> Result<Tensor<(Seq, P::Hidden), E, D>, Error> {
+    ) -> Result<Tensor<(Batch, Seq, P::Hidden), E, D>, Error> {
         let x2 = self.norm.try_forward(x.clone())?;
-        let x2 = self
-            .attn
-            .try_forward(x2, layer, pos, pos_scale, pos_enc, cache)?;
+        let x2 = self.attn.try_forward(x2, layer, pos, pos_enc, cache)?;
         let x = x2.try_add(x)?;
         Ok(self.mlp.try_forward(x)?)
     }
@@ -293,16 +291,15 @@ where
         self.params.layers().size()
     }
 
-    pub fn try_forward<Seq: Dim>(
+    pub fn try_forward<Batch: Dim, Seq: Dim>(
         &self,
-        x: Tensor<(Seq,), usize, D>,
-        pos: usize,
-        pos_scale: usize,
+        x: Tensor<(Batch, Seq), usize, D>,
+        pos: Tensor<(Batch, Seq), usize, D>,
         cache: &mut Option<&mut Cache<P::KvHeads, P::HeadDim, P::Layers, E, D>>,
-    ) -> Result<Tensor<(Seq, P::Vocab), E, D>, Error> {
+    ) -> Result<Tensor<(Batch, Seq, P::Vocab), E, D>, Error> {
         let mut x = self.embedding_layer.try_forward(x)?;
         for i in 0..self.layers() {
-            x = self.atten_layers[i].try_forward(x, i, pos, pos_scale, &self.pos_enc, cache)?;
+            x = self.atten_layers[i].try_forward(x, i, pos.clone(), &self.pos_enc, cache)?;
         }
         Ok(self.lm_header.try_forward(x)?)
     }

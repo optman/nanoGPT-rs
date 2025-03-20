@@ -1,44 +1,37 @@
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use dfdx::data::ExactSizeDataset;
 
 pub struct DataSet {
-    ids: Vec<usize>,
-    seq_len: usize,
+    ids: Vec<Vec<usize>>,
 }
 
 impl DataSet {
-    pub fn new(path: &Path, seq_len: usize) -> Self {
-        let mut buf = Vec::<u8>::new();
-        File::open(path).unwrap().read_to_end(&mut buf).unwrap();
+    pub fn new(path: &Path) -> Self {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(file);
+        let mut ids = Vec::new();
 
-        let ids = buf
-            .chunks_exact(2)
-            .map(|chunk| u16::from_be_bytes(chunk.try_into().unwrap()) as usize)
-            .collect();
+        for line in reader.lines() {
+            let line = line.unwrap();
+            let line_ids: Vec<usize> = line.bytes().map(|b| b as usize).collect();
 
-        Self { ids, seq_len }
+            ids.push(line_ids);
+        }
+        Self { ids }
     }
 }
 
 impl ExactSizeDataset for DataSet {
-    type Item<'a> = (&'a[usize], &'a[usize]) where Self: 'a;
+    type Item<'a> = &'a[usize] where Self: 'a;
 
     fn get(&self, index: usize) -> Self::Item<'_> {
-        let seq_len = self.seq_len;
-
-        let mut start = (seq_len + 1) * index;
-        let x = &self.ids[start..start + seq_len];
-
-        start += 1;
-        let y = &self.ids[start..start + seq_len];
-
-        (x, y)
+        &self.ids[index]
     }
 
     fn len(&self) -> usize {
-        self.ids.len() / (self.seq_len + 1)
+        self.ids.len()
     }
 }

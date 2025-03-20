@@ -1,13 +1,13 @@
 {
-  "vocab": 32000,
-  "hidden": 384,
-  "mlp_hidden": 1536,
-  "heads": 12,
+  "vocab": 128,
+  "hidden": 192,
+  "mlp_hidden": 384,
+  "heads": 6,
   "head_dim": 32,
   "kv_heads": 1,
   "kv_dim": 32,
   "layers": 6,
-  "dropout": 0.1,
+  "dropout": 0,
   "rope_base": 10000,
-  "rope_max_seq": 1024
+  "rope_max_seq": 32
 }

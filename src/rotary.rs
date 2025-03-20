@@ -23,36 +23,45 @@ pub struct RotaryEmbedding<HeadDim: Dim, E: Dtype, D: Device<E>> {
 }
 impl<HeadDim: Dim, E: Dtype, D: Device<E>> RotaryEmbedding<HeadDim, E, D> {
     //none tape
-    pub fn try_forward<Seq: Dim, Headers: Dim>(
+    pub fn try_forward<Batch: Dim, Seq: Dim, Headers: Dim>(
         &self,
-        x: Tensor<(Seq, Headers, HeadDim), E, D>,
-        pos: usize,
-        pos_scale: usize,
-    ) -> Result<Tensor<(Seq, Headers, HeadDim), E, D>, Error> {
-        let seq = x.shape().0;
-        let half_hiden = self.head_dim.size() / 2;
-        let first_half = x.clone().slice((.., .., 0..half_hiden));
-        let second_half = x.clone().slice((.., .., half_hiden..));
+        x: Tensor<(Batch, Seq, Headers, HeadDim), E, D>,
+        pos: Tensor<(Batch, Seq), usize, D>,
+    ) -> Result<Tensor<(Batch, Seq, Headers, HeadDim), E, D>, Error> {
+        let batch = x.shape().0;
+        //let seq = x.shape().1;
+        let head_dim = self.head_dim.size();
+        let max_seq = self.cos.shape().0;
+        let half_hiden = head_dim / 2;
+        let first_half = x.clone().slice((.., .., .., 0..half_hiden));
+        let second_half = x.clone().slice((.., .., .., half_hiden..));
 
-        let idx = x.dev().tensor_from_vec(
-            (pos..pos + seq.size()).map(|n| n / pos_scale).collect(),
-            (seq,),
-        );
-
-        let sub_cos: Tensor<(Seq, HeadDim), _, _> = self.cos.clone().gather(idx.clone()).realize();
-        let sub_sin: Tensor<(Seq, HeadDim), _, _> = self.sin.clone().gather(idx).realize();
-
-        let neg_half_x: Tensor<(Seq, Headers, HeadDim), _, _> = (first_half.negate(), second_half)
-            .concat_tensor_along(Axis::<2>)
+        let sub_cos: Tensor<(Batch, Seq, HeadDim), _, _> = self
+            .cos
+            .clone()
+            .reshape_like(&(max_seq, head_dim))
+            .broadcast_like(&(batch, max_seq, head_dim))
+            .gather(pos.clone())
             .realize();
+        let sub_sin: Tensor<(Batch, Seq, HeadDim), _, _> = self
+            .sin
+            .clone()
+            .reshape_like(&(max_seq, head_dim))
+            .broadcast_like(&(batch, max_seq, head_dim))
+            .gather(pos)
+            .realize();
+
+        let neg_half_x: Tensor<(Batch, Seq, Headers, HeadDim), _, _> =
+            (first_half.negate(), second_half)
+                .concat_tensor_along(Axis::<3>)
+                .realize();
 
         let y = sub_sin.broadcast_like(&x) * neg_half_x + sub_cos.broadcast_like(&x) * x;
 
         Ok(y)
     }
 
-    //with tape
-    pub fn try_forward_batch<Batch: Dim, Seq: Dim, Headers: Dim>(
+    pub fn try_forward_mut<Batch: Dim, Seq: Dim, Headers: Dim>(
         &self,
         x: Tensor<(Batch, Seq, Headers, HeadDim), E, D, OwnedTape<E, D>>,
     ) -> Result<Tensor<(Batch, Seq, Headers, HeadDim), E, D, OwnedTape<E, D>>, Error> {

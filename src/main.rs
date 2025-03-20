@@ -5,16 +5,19 @@ mod config;
 mod dataset;
 mod generate;
 mod model;
-mod pretokenize;
+//mod pretokenize;
 mod rotary;
 mod train;
-use crate::{cache::Cache, generate::GenerateOption, pretokenize::pretokenize};
-use cli::{Cli, Commands};
+mod train_rl;
+mod train_sft;
+use crate::{cache::Cache, generate::GenerateOption};
+use cli::{Cli, Commands, TrainMethod};
 use config::Config;
 use generate::{generate, print_metrics};
 use model::{GPTModel, Params};
-use rust_tokenizers::tokenizer::SentencePieceBpeTokenizer;
-use train::train;
+use train::train as pre_train;
+use train_rl::train as train_rl;
+use train_sft::train as sft_train;
 
 use clap::Parser;
 use dfdx::{nn::LoadSafeTensors, tensor::AutoDevice};
@@ -29,13 +32,12 @@ fn main() {
 
     let dev = AutoDevice::default();
     let mut rng = StdRng::seed_from_u64(args.seed);
-    let tokenizer = load_tokenizer(&args.tokenizer);
 
     let conf = Config::load("model.json");
 
     match args.command {
         Commands::Generate {
-            prompt,
+            prompts,
             disable_cache,
             top_k,
             top_p,
@@ -58,14 +60,25 @@ fn main() {
                 temperature,
                 max_seq_len: num_tokens,
                 pos_scale,
-                verbose: true,
+                verbose: false,
                 cache_size,
+                ..Default::default()
             };
 
             let start = std::time::Instant::now();
-            let _ = generate(
-                &tokenizer, &mut rng, &dev, &m, &prompt, num_tokens, &gen_opt,
+            let (completes, _) = generate(
+                &mut rng,
+                &dev,
+                &m,
+                prompts.iter().map(|x| x.as_str()).collect(),
+                num_tokens,
+                &gen_opt,
             );
+
+            prompts.iter().zip(completes.iter()).for_each(|(p, c)| {
+                println!("{p}{c}");
+            });
+
             if bench {
                 print_metrics(start.elapsed(), num_tokens);
             }
@@ -73,41 +86,83 @@ fn main() {
         Commands::Train {
             input,
             model,
-            prompt,
+            prompts,
             batch_size,
             seq_len,
             save_dir,
             epoch_save,
             epoch_max,
             lr,
+            method,
         } => {
             let mut m = conf.build(&dev);
             let epoch_base = load_model(&mut m, model);
 
             let gen = |m: &GPTModel<_, _, _>| -> String {
                 let mut rng = StdRng::seed_from_u64(0);
-                generate(
-                    &tokenizer,
+                let gen_opt = GenerateOption {
+                    max_seq_len: seq_len,
+                    greedy: true,
+                    ..Default::default()
+                };
+                let (completions, _) = generate(
                     &mut rng,
                     &dev,
                     m,
-                    &prompt,
+                    prompts.iter().map(|x| x.as_str()).collect(),
                     seq_len,
-                    &Default::default(),
-                )
+                    &gen_opt,
+                );
+
+                prompts
+                    .iter()
+                    .zip(completions.iter())
+                    .fold(String::new(), |acc, (p, c)| format!("{acc} {p}{c}"))
             };
 
-            train(
-                &mut rng, &dev, &mut m, epoch_base, batch_size, seq_len, &input, &save_dir,
-                epoch_save, epoch_max, lr, gen,
-            );
-        }
-        Commands::PreTokenize {
-            input,
-            output,
-            chunk_size,
-        } => {
-            pretokenize(&tokenizer, &input, &output, chunk_size);
+            match method {
+                TrainMethod::Pretrain {} => {
+                    pre_train(
+                        &mut rng, &dev, &mut m, epoch_base, batch_size, seq_len, &input, &save_dir,
+                        epoch_save, epoch_max, lr, gen,
+                    );
+                }
+                TrainMethod::SFT {} => {
+                    sft_train(
+                        &mut rng, &dev, &mut m, epoch_base, batch_size, seq_len, &input, &save_dir,
+                        epoch_save, epoch_max, lr, gen,
+                    );
+                }
+                TrainMethod::RL {
+                    rollout_num,
+                    rollout_temperature,
+                    rollout_dump,
+                    clip_ratio,
+                    pi_iters,
+                    kl_target,
+                } => {
+                    train_rl(
+                        &mut rng,
+                        &dev,
+                        &mut m,
+                        epoch_base,
+                        batch_size,
+                        seq_len,
+                        &input,
+                        &save_dir,
+                        epoch_save,
+                        epoch_max,
+                        lr,
+                        rollout_num,
+                        rollout_temperature,
+                        rollout_dump,
+                        clip_ratio,
+                        pi_iters,
+                        kl_target,
+                        gen,
+                    );
+                }
+            }
         }
     }
 }
@@ -123,14 +178,9 @@ fn load_model<P: Params>(m: &mut GPTModel<P, E, D>, path: Option<String>) -> usi
             .to_str()
             .unwrap()
             .parse::<usize>()
-            .unwrap()
-            + 1;
+            .unwrap();
         m.load_safetensors(path).unwrap();
     };
 
     epoch_base
-}
-
-fn load_tokenizer(path: &str) -> SentencePieceBpeTokenizer {
-    SentencePieceBpeTokenizer::from_file(path, false).unwrap()
 }

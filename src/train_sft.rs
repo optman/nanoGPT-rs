@@ -4,8 +4,9 @@ use crate::{
 };
 use dfdx::{data::*, nn::Adam, prelude::*};
 use indicatif::{ProgressIterator, ProgressStyle};
-use num_traits::ToPrimitive;
 use rand::prelude::StdRng;
+use std::rc::Rc;
+use std::sync::RwLock;
 use std::{fs, path::Path};
 
 #[allow(clippy::too_many_arguments)]
@@ -39,27 +40,45 @@ pub fn train<P: Params, E: Dtype, D: Device<E>>(
 
     let vocab = m.params().vocab().size();
 
+    let answer_count_batch = Rc::new(RwLock::new(0));
+    let answer_count_batch2 = answer_count_batch.clone();
+
     let preprocess = |line: &[usize]| {
+        //search for the position of the first '=' of the line
+        let pos = line.iter().position(|&c| c == b'=' as usize).unwrap();
+        let answer_pos = pos + 1;
+
+        //append '\n', and padding the line with spaces to the end with length seq_len + 1
         let mut line = line.to_owned();
         line.push(b'\n' as usize);
-        while line.len() <= seq_len {
+
+        let padding_start = line.len();
+
+        let mut padding_len = seq_len - padding_start + 1;
+        while padding_len > 0 {
             line.push(b' ' as usize);
+            padding_len -= 1;
         }
 
-        let y = &line[1..];
+        let answer = &line[answer_pos..padding_start];
+        *answer_count_batch2.write().unwrap() += answer.len();
+
+        //target is embeding of line[1..seq_len+ 1], but mask other regions onther than answer part.
         let mut targets = vec![E::zero(); vocab * seq_len];
-        for (i, v) in y.iter().enumerate() {
-            targets[i * vocab + v] = E::ONE;
+        for (i, v) in answer.iter().enumerate() {
+            targets[(answer_pos - 1 + i) * vocab + v] = E::ONE;
         }
-        let x = dev.tensor_from_vec(line[..seq_len].to_vec(), (seq_len,));
+
+        let x = dev.tensor_from_vec(line[..seq_len].to_owned(), (seq_len,));
         let y: Tensor<(usize, P::Vocab), _, _> =
             dev.tensor_from_vec(targets, (seq_len, vocab)).realize();
+
         (x, y)
     };
 
     for epoch_i in 1..=epoch_max {
-        let mut total_epoch_loss: E = E::zero();
-        let mut total_batch = 0;
+        let mut answer_count_epoch = 0;
+        let mut total_epoch_loss = 0.0;
         let start = std::time::Instant::now();
         for (x, y) in train_data
             .shuffled(rng)
@@ -74,8 +93,10 @@ pub fn train<P: Params, E: Dtype, D: Device<E>>(
         {
             let y2 = m.try_forward_mut(x.trace(grads)).unwrap();
             let loss = cross_entropy_with_logits_loss(y2, y);
-            total_epoch_loss += loss.array();
-            total_batch += 1;
+            total_epoch_loss += loss.array().to_f64().unwrap();
+
+            answer_count_epoch += *answer_count_batch2.read().unwrap();
+            *answer_count_batch2.write().unwrap() = 0;
 
             grads = loss.backward();
             opt.update(m, &grads).unwrap();
@@ -86,8 +107,7 @@ pub fn train<P: Params, E: Dtype, D: Device<E>>(
 
         println!(
             "Epoch {epoch_total}, average loss {:.5}, elapsed: {:.0?} => {:}",
-            total_epoch_loss.to_f64().unwrap()
-                / (total_batch * batch_size * seq_len).to_f64().unwrap(),
+            total_epoch_loss / (answer_count_epoch as f64),
             start.elapsed(),
             gen(m)
         );

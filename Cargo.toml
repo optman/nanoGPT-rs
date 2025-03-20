@@ -19,18 +19,18 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 [dependencies.dfdx]
-git = "https://github.com/coreylowman/dfdx"
-version = "0.13.0"
+git = "https://github.com/optman/dfdx"
+branch="patch/my-fix"
 optional = false
 
 [dependencies.dfdx-core]
-git = "https://github.com/coreylowman/dfdx"
-version = "0.13.0"
+git = "https://github.com/optman/dfdx"
+branch="patch/my-fix"
 optional = false
 
 [dependencies.dfdx-derives]
-git = "https://github.com/coreylowman/dfdx"
-version = "0.13.0"
+git = "https://github.com/optman/dfdx"
+branch="patch/my-fix"
 optional = false
 
 

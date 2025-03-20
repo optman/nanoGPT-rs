@@ -7,18 +7,15 @@ pub(crate) struct Cli {
 
     #[arg(long, default_value_t = 0)]
     pub(crate) seed: u64,
-
-    #[arg(short, long, default_value = "tokenizer.model")]
-    pub(crate) tokenizer: String,
 }
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Commands {
     Generate {
-        #[arg(short, long, default_value = "God")]
-        prompt: String,
+        #[arg(short, long, default_value = "1+1=")]
+        prompts: Vec<String>,
 
-        #[arg(short, long, default_value_t = 256)]
+        #[arg(short, long, default_value_t = 16)]
         num_tokens: usize,
 
         #[arg(long, default_value_t = false)]
@@ -42,27 +39,27 @@ pub(crate) enum Commands {
         #[arg(short, long, default_value=None)]
         model: Option<String>,
 
-        #[arg(long, default_value_t = 4)] //cache_size / seq_len(training)
+        #[arg(long, default_value_t = 1)]
         pos_scale: usize,
 
-        #[arg(long, default_value_t = 256)]
+        #[arg(long, default_value_t = 16)]
         cache_size: usize,
     },
 
     Train {
-        #[arg(short, long, default_value = "input.bin")]
+        #[arg(short, long, default_value = "input.txt")]
         input: String,
 
         #[arg(short, long, default_value=None)]
         model: Option<String>,
 
-        #[arg(short, long, default_value = "God")]
-        prompt: String,
+        #[arg(short, long, default_value = "1+1=")]
+        prompts: Vec<String>,
 
         #[arg(short, long, default_value_t = 8)]
         batch_size: usize,
 
-        #[arg(short, long, default_value_t = 64)]
+        #[arg(short, long, default_value_t = 16)]
         seq_len: usize,
 
         #[arg(long, default_value = "save")]
@@ -74,17 +71,35 @@ pub(crate) enum Commands {
         #[arg(long, default_value_t = 100)]
         epoch_max: usize,
 
-        #[arg(long, default_value_t = 1e-4)]
+        #[arg(long, default_value_t = 1e-5)]
         lr: f64,
+
+        #[command(subcommand)]
+        method: TrainMethod,
     },
-    PreTokenize {
-        #[arg(short, long, default_value = "")]
-        input: String,
+}
 
-        #[arg(short, long, default_value = "")]
-        output: String,
+#[derive(Subcommand, Debug)]
+pub(crate) enum TrainMethod {
+    Pretrain {},
+    SFT {},
+    RL {
+        #[arg(long, default_value_t = 8)]
+        rollout_num: usize,
 
-        #[arg(short, long, default_value_t = 10_000)]
-        chunk_size: usize,
+        #[arg(long, default_value_t = 1.0)]
+        rollout_temperature: f32,
+
+        #[arg(long, default_value_t = 0)]
+        rollout_dump: usize,
+
+        #[arg(long, default_value_t = 0.2)]
+        clip_ratio: f32,
+
+        #[arg(long, default_value_t = 1)]
+        pi_iters: usize,
+
+        #[arg(long, default_value_t = 0.01)]
+        kl_target: f32,
     },
 }

@@ -15,7 +15,7 @@ pub struct Cache<KvHeads: Dim, HeadDim: Dim, Layers: Dim, E: Dtype, D: Device<E>
 impl<KvHeads: Dim, HeadDim: Dim, Layers: Dim, E: Dtype, D: Device<E>> Entry
     for Cache<KvHeads, HeadDim, Layers, E, D>
 {
-    type E = Tensor<(usize, KvHeads, HeadDim), E, D>;
+    type E = Tensor<(usize /*Batch*/, usize /*Seq*/, KvHeads, HeadDim), E, D>;
 }
 
 impl<KvHeads: Dim, HeadDim: Dim, Layers: Dim, E: Dtype, D: Device<E>>
@@ -48,9 +48,9 @@ impl<KvHeads: Dim, HeadDim: Dim, Layers: Dim, E: Dtype, D: Device<E>>
         let cc = if let Some(mut cc) = Option::take(c) {
             let len = cc.shape().0.size();
             if len >= max_cache_size {
-                cc = cc.slice((len - max_cache_size + 1.., .., ..));
+                cc = cc.slice((.., len - max_cache_size + 1.., .., ..));
             }
-            (cc, new_item).concat_tensor_along(Axis::<0>)
+            (cc, new_item).concat_tensor_along(Axis::<1>)
         } else {
             new_item
         };
