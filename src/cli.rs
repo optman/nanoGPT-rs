@@ -11,6 +11,19 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Commands {
+    Eval {
+        #[arg(short, long, default_value = "input-test.txt")]
+        input: String,
+
+        #[arg(short, long, default_value=None)]
+        model: Option<String>,
+
+        #[arg(short, long, default_value_t = 8)]
+        batch_size: usize,
+
+        #[arg(short, long, default_value_t = 16)]
+        num_tokens: usize,
+    },
     Generate {
         #[arg(short, long, default_value = "1+1=")]
         prompts: Vec<String>,

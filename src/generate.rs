@@ -4,10 +4,6 @@ use crate::{
 };
 use dfdx::prelude::*;
 use rand::{rngs::StdRng, Rng};
-//use rust_tokenizers::{
-//    tokenizer::{Tokenizer, TruncationStrategy},
-//    vocab::Vocab,
-//};
 use std::io::Write;
 
 pub struct GenerateOption {
@@ -40,8 +36,7 @@ impl Default for GenerateOption {
     }
 }
 
-pub fn generate<P: Params /*,  V: Vocab, T: Tokenizer<V>*/, E, D: Device<E>>(
-    //tokenizer: &T,
+pub fn generate<P: Params, E, D: Device<E>>(
     rng: &mut StdRng,
     dev: &D,
     m: &GPTModel<P, E, D>,

@@ -3,9 +3,9 @@ mod cache;
 mod cli;
 mod config;
 mod dataset;
+mod eval;
 mod generate;
 mod model;
-//mod pretokenize;
 mod rotary;
 mod train;
 mod train_rl;
@@ -13,6 +13,7 @@ mod train_sft;
 use crate::{cache::Cache, generate::GenerateOption};
 use cli::{Cli, Commands, TrainMethod};
 use config::Config;
+use eval::eval;
 use generate::{generate, print_metrics};
 use model::{GPTModel, Params};
 use train::train as pre_train;
@@ -36,6 +37,22 @@ fn main() {
     let conf = Config::load("model.json");
 
     match args.command {
+        Commands::Eval {
+            input,
+            model,
+            batch_size,
+            num_tokens,
+        } => {
+            let mut m = conf.build(&dev);
+            load_model(&mut m, model);
+
+            let (total, acc) = eval(&dev, &m, &input, batch_size, num_tokens);
+
+            println!(
+                "total: {total}, correct: {acc}, accuracy: {:.0}%",
+                acc as f32 / total as f32 * 100.0
+            );
+        }
         Commands::Generate {
             prompts,
             disable_cache,
